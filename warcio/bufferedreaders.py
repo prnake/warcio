@@ -5,29 +5,73 @@ import sys
 from warcio.utils import BUFF_SIZE
 
 
-#=================================================================
-def gzip_decompressor():
+class ZlibDecompressor:
     """
-    Decompressor which can handle decompress gzip stream
+    An object that allows for streaming decompression of zlib-compressed data.
     """
-    return zlib.decompressobj(16 + zlib.MAX_WBITS)
 
+    def __init__(self, encoding):
+        assert encoding in ['gzip', 'deflate', 'deflate_alt']
+        if encoding == "gzip":
+            self._decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        elif encoding == "deflate":
+            self._decompressor = zlib.decompressobj()
+        elif encoding == "deflate_alt":
+            self._decompressor = zlib.decompressobj(-zlib.MAX_WBITS)
+        self._buffer_size = 65536
+        self.remaining_data = b''
 
-def deflate_decompressor():
-    return zlib.decompressobj()
+    def decompress(self, data, extend_callback=None):
+        """
+        Decompress part of a complete zlib-compressed string.
 
+        :param data: A bytestring containing zlib-compressed data.
+        :param extend_callback: A callback function to handle each decompressed chunk.
+        :returns: A bytestring containing the decompressed data.
+        """
+        chunks = []
+        # self.remaining_data = self.remaining_data + data
+        self.remaining_data = self.remaining_data + data
 
-def deflate_decompressor_alt():
-    return zlib.decompressobj(-zlib.MAX_WBITS)
+        while self.remaining_data:
+            decompressed_chunk = self._decompressor.decompress(self.remaining_data, self._buffer_size)
+            chunks.append(decompressed_chunk)
+            # print(decompressed_chunk, len(chunks))
+            if extend_callback:
+                flag = extend_callback(decompressed_chunk, len(chunks))
+                if not flag:
+                    break
+            self.remaining_data = self._decompressor.unconsumed_tail
+            if len(decompressed_chunk) < self._buffer_size:
+                break
+
+        return b''.join(chunks)
+
+    def flush(self):
+        """
+        Complete the decompression, returning any remaining data to be decompressed.
+
+        :returns: A bytestring containing the remaining decompressed data.
+        """
+        return self._decompressor.flush()
+    
+    @property
+    def unused_data(self):
+        """
+        Return any unused data from the decompression process.
+
+        :returns: A bytestring containing the unused data.
+        """
+        return self._decompressor.unused_data
 
 
 #=================================================================
 def try_brotli_init():
     try:
-        import brotli
+        import warcio.brotli
 
         def brotli_decompressor():
-            decomp = brotli.Decompressor()
+            decomp = warcio.brotli.Decompressor()
             decomp.unused_data = None
             return decomp
 
@@ -56,16 +100,17 @@ class BufferedReader(object):
 
     """
 
-    DECOMPRESSORS = {'gzip': gzip_decompressor,
-                     'deflate': deflate_decompressor,
-                     'deflate_alt': deflate_decompressor_alt
+    DECOMPRESSORS = {'gzip': lambda: ZlibDecompressor('gzip'),
+                     'deflate': lambda: ZlibDecompressor('deflate'),
+                     'deflate_alt': lambda: ZlibDecompressor('deflate_alt'),
                     }
 
     def __init__(self, stream, block_size=BUFF_SIZE,
                  decomp_type=None,
                  starting_data=None,
-                 read_all_members=False):
-
+                 read_all_members=False,
+                 extend_callback=None):
+        
         self.stream = stream
         self.block_size = block_size
 
@@ -77,6 +122,8 @@ class BufferedReader(object):
         self.buff_size = 0
 
         self.read_all_members = read_all_members
+
+        self.extend_callback = extend_callback
 
     def set_decomp(self, decomp_type):
         self._init_decomp(decomp_type)
@@ -134,7 +181,7 @@ class BufferedReader(object):
     def _decompress(self, data):
         if self.decompressor and data:
             try:
-                data = self.decompressor.decompress(data)
+                data = self.decompressor.decompress(data, self.extend_callback)
             except Exception as e:
                 # if first read attempt, assume non-gzipped stream
                 if self.num_block_read == 0:
