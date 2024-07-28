@@ -192,7 +192,7 @@ class BufferedReader(object):
                         self.decompressor = None
                 # otherwise (partly decompressed), something is wrong
                 else:
-                    sys.stderr.write(str(e) + '\n')
+                    # sys.stderr.write(str(e) + '\n')
                     return b''
         return data
 

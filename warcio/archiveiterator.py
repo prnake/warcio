@@ -184,7 +184,7 @@ class ArchiveIterator(six.Iterator):
                     # if first line is not blank,
                     # likely content-length was invalid, display warning
                     err_offset = self.fh.tell() - self.reader.rem_length() - empty_size
-                    sys.stderr.write(self.INC_RECORD.format(err_offset, line))
+                    sys.stderr.write(self.INC_RECORD.format(err_offset, line[:100]))
                     self.err_count += 1
 
                 first_line = False
